@@ -18,6 +18,11 @@
       </article>
     </div>
 
+    <p v-if="coordOpen" class="coord-note">
+      断面成组复测落库时已为本页联动新增 <b>{{ coordOpen }}</b> 条「复测配合」待办（共 {{ coordTotal }} 条），
+      与常规站房维护一并安排验收。
+    </p>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
@@ -38,13 +43,18 @@
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
           <th>当前状态</th>
+          <th>来源</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
+        <tr v-for="row in rows" :key="String(row.id)" :class="{ 'coord-row': isCoordination(row) }">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
+          <td>
+            <span v-if="isCoordination(row)" class="coord-tag">复测配合</span>
+            <span v-else>常规维护</span>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -58,7 +68,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无站房维护数据，可先登记站房维护记录</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无站房维护数据，可先登记站房维护记录</td>
         </tr>
       </tbody>
     </table>
@@ -71,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import {
   downloadEntries,
@@ -79,19 +89,34 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { countCoordinationTodos, subscribeStorage } from '@/api/retest-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('stationhouse')
 const columns = ["记录编号", "站点编号", "维护类型", "维护内容", "维护单位", "维护日期", "费用支出", "维护状态"]
 const actions = ["安排维护", "确认完工", "通过验收"]
 const statuses = ["待安排", "已安排", "施工中", "已完成", "已验收"]
-const stats = [{"label": "待维护项数", "value": 0}, {"label": "施工中项数", "value": 0}, {"label": "本月已验收", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+function isCoordination(row: EntryRow): boolean {
+  return String(row['维护类型'] ?? '') === '复测配合'
+}
+
+const coordStats = computed(() => countCoordinationTodos(rows.value))
+const coordOpen = computed(() => coordStats.value.open)
+const coordTotal = computed(() => coordStats.value.total)
+
+const stats = computed(() => [
+  { label: "待维护项数", value: rows.value.filter((row) => String(row.status) === "待安排").length },
+  { label: "复测配合待办", value: coordOpen.value },
+  { label: "本月已验收", value: rows.value.filter((row) => String(row["维护日期"] ?? '').startsWith(new Date().toISOString().slice(0, 7)) && String(row.status) === "已验收").length },
+])
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -133,5 +158,33 @@ function reload() {
   }
 }
 
-onMounted(reload)
+let unsubscribe: (() => void) | null = null
+onMounted(() => {
+  reload()
+  // 断面复测批次在另一终端落库、新增复测配合待办时，本页自动刷新。
+  unsubscribe = subscribeStorage(reload)
+})
+onUnmounted(() => {
+  unsubscribe?.()
+})
 </script>
+
+<style scoped>
+.coord-note {
+  background: #eef4ff;
+  border: 1px solid #cdddf7;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.coord-row { background: #f7faff; }
+.coord-tag {
+  display: inline-block;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 12px;
+}
+</style>
