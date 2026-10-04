@@ -48,6 +48,19 @@ export function saveRows(key: string, rows: EntryRow[]): void {
   }
 }
 
+// 多终端写入走这里：绕过内存缓存重新读 localStorage，同步完成「读-改-写」，
+// 避免另一个标签页刚写入的数据被旧缓存覆盖。
+export function mutateRows(key: string, mutator: (rows: EntryRow[]) => EntryRow[]): EntryRow[] {
+  const stored = readStorage()
+  const next = mutator(stored[key] ?? [])
+  const merged = { ...stored, [key]: next }
+  cache = merged
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+  }
+  return next
+}
+
 export function resetRows(key: string): EntryRow[] {
   const rows = clone(SEED_ROWS[key] ?? [])
   saveRows(key, rows)
